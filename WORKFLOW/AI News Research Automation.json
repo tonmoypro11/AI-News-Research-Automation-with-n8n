@@ -1,0 +1,435 @@
+{
+  "name": "AI News Research Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "AI News Research Automation\n\nPOST /webhook/ai-news-research with JSON body:\n{ \"topic\": \"AI Agents\", \"articles\": 10 }\n\nFetches NewsAPI articles, analyzes each with Claude, saves to Google Sheets, then returns the top 3 by LinkedIn Worthiness Score."
+      },
+      "id": "9bf7a8bf-94cd-49ee-adf5-47a24db11b5f",
+      "name": "Sticky Note 9bf7a8bf",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        784,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-news-research",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f1fe3e8d-a12a-42f3-8b52-e04e1023db37",
+      "name": "News Request Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -112,
+        -16
+      ],
+      "webhookId": "068c0f7e-aff7-456d-835d-8d71948078a7"
+    },
+    {
+      "parameters": {
+        "url": "https://newsapi.org/v2/everything",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.body.topic }}"
+            },
+            {
+              "name": "pageSize",
+              "value": "={{ $json.body.articles }}"
+            },
+            {
+              "name": "sortBy",
+              "value": "publishedAt"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "eda5e2cb-7772-4fdd-b060-6dd1c09d4dbd",
+      "name": "Fetch News (NewsAPI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        96
+      ],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "OBunFYYJYKcnf2jg",
+          "name": "Query Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "articles",
+        "options": {}
+      },
+      "id": "31dd0415-0ff3-43ae-a0ef-aca556138636",
+      "name": "Split Articles",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        448,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "claude-sonnet-4-6",
+          "mode": "list",
+          "cachedResultName": "claude-sonnet-4-6"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are an AI News Research Assistant.\n\nAnalyze the following article.\n\nTitle:\n{{ $json.title }}\n\nDescription:\n{{ $json.description }}\n\nContent:\n{{ $json.content }}\n\nSource:\n{{ $json.source.name }}\n\nPublished Date:\n{{ $json.publishedAt }}\n\nReturn ONLY valid JSON using this structure:\n{ \"summary\": \"\", \"key_takeaway\": \"\", \"category\": \"\", \"linkedin_score\": 0 }\n\nRules:\n- Summary must be 2-3 sentences.\n- key_takeaway should be one sentence.\n- Category must be exactly one of: AI Product, AI Research, Funding, Open Source, Business.\n- linkedin_score must be an integer between 1 and 10."
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 1024
+        }
+      },
+      "id": "3b1af1b3-fa71-4782-8e72-927dc95818cd",
+      "name": "Analyze Article (Claude)",
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [
+        672,
+        96
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "JDRzPg3y5vllnco8",
+          "name": "Anthropic account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst sourceItems = $('Split Articles').all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const aj = items[i].json || {};\n  const article = (sourceItems[i] && sourceItems[i].json) ? sourceItems[i].json : {};\n  // Extract the model text from whatever shape the node returned\n  let raw = '';\n  if (typeof aj.content === 'string') { raw = aj.content; }\n  else if (Array.isArray(aj.content) && aj.content[0] && typeof aj.content[0].text === 'string') { raw = aj.content[0].text; }\n  else if (typeof aj.text === 'string') { raw = aj.text; }\n  else if (aj.message && typeof aj.message.content === 'string') { raw = aj.message.content; }\n  else if (typeof aj.message === 'string') { raw = aj.message; }\n  // Pull the JSON object out of the text (handles ```json fences and extra prose)\n  let parsed = {};\n  const start = raw.indexOf('{');\n  const end = raw.lastIndexOf('}');\n  if (start !== -1 && end !== -1 && end > start) {\n    try { parsed = JSON.parse(raw.substring(start, end + 1)); } catch (err) { parsed = {}; }\n  }\n  let score = parseInt(parsed.linkedin_score, 10);\n  if (isNaN(score)) { score = 0; }\n  out.push({ json: {\n    \"Title\": article.title || '',\n    \"Source\": (article.source && article.source.name) ? article.source.name : '',\n    \"Published Date\": article.publishedAt || '',\n    \"Summary\": parsed.summary || '',\n    \"Key Takeaway\": parsed.key_takeaway || '',\n    \"Category\": parsed.category || '',\n    \"LinkedIn Worthiness Score\": score,\n    \"Article URL\": article.url || '',\n  } });\n}\nreturn out;"
+      },
+      "id": "ec1e749c-7f9f-48ed-b495-db8cf3426080",
+      "name": "Parse Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1qjMyJNMgG4B6GBMVQ05euwRIWdOxz3CEC1RpDBto9qU",
+          "mode": "list",
+          "cachedResultName": "ai news",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1qjMyJNMgG4B6GBMVQ05euwRIWdOxz3CEC1RpDBto9qU/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1qjMyJNMgG4B6GBMVQ05euwRIWdOxz3CEC1RpDBto9qU/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Title",
+              "displayName": "Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Published Date",
+              "displayName": "Published Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "LinkedIn Score",
+              "displayName": "LinkedIn Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "URL",
+              "displayName": "URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Key Takeaway",
+              "displayName": "Key Takeaway",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "LinkedIn Worthiness Score",
+              "displayName": "LinkedIn Worthiness Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Article URL",
+              "displayName": "Article URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "handlingExtraData": "insertInNewColumn"
+        }
+      },
+      "id": "ec5eb8bd-31d6-4ca0-a956-3b06e33c96a6",
+      "name": "Save to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1120,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "wdSxOP7IgxlSPD7K",
+          "name": "Google Sheets OAuth2 API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "sortFieldsUi": {
+          "sortField": [
+            {
+              "fieldName": "LinkedIn Worthiness Score",
+              "order": "descending"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "12b95454-2369-490a-a7e3-387da2d55ed4",
+      "name": "Sort by Score (desc)",
+      "type": "n8n-nodes-base.sort",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 3
+      },
+      "id": "eea28c50-01e8-444f-88f8-de3be8300899",
+      "name": "Keep Top 3",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"processed_articles\": $('Parse Analysis').all().length, \"top_articles\": $input.all().map(i => i.json) } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "1168146c-e431-4d7e-87d2-a8eed775b23e",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1616,
+        -16
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "News Request Webhook": {
+      "main": [
+        [
+          {
+            "node": "Fetch News (NewsAPI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch News (NewsAPI)": {
+      "main": [
+        [
+          {
+            "node": "Split Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Articles": {
+      "main": [
+        [
+          {
+            "node": "Analyze Article (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Article (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Parse Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Analysis": {
+      "main": [
+        [
+          {
+            "node": "Save to Google Sheets",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sort by Score (desc)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sort by Score (desc)": {
+      "main": [
+        [
+          {
+            "node": "Keep Top 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep Top 3": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "df182cd6-9aaf-466b-b79e-09f92f5b1f84",
+  "meta": {
+    "instanceId": "2a121e9f52c50082b67e8e0de2ae525e9745352ee307e77a22992fe2008aabe0"
+  },
+  "nodeGroups": [],
+  "id": "Jfz2RAzJA5BnXfgF",
+  "tags": []
+}
